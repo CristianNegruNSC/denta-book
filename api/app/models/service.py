@@ -1,12 +1,11 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String
+from sqlalchemy.orm import relationship
 from app.core.db import Base
 
 class Service(Base):
     __tablename__ = "services"
 
     id = Column(Integer, primary_key=True, index=True)
-    provider_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
-    name = Column(String, nullable=False)
-    price = Column(Float, nullable=False)
-    duration_minutes = Column(Integer, nullable=False)
-    is_default = Column(Boolean, default=False)  # marchează serviciile predefinite
+    name = Column(String, nullable=False, unique=True)
+
+    providers = relationship("ProviderService", back_populates="service", cascade="all, delete-orphan")

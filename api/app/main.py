@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.settings import settings
-from app.routers import auth, users, availability, appointments, admin, service
+from app.routers import auth, users, availability, appointments, admin, service, working_hours
 
 app = FastAPI(title="DentaBook API")
 
@@ -23,3 +23,4 @@ app.include_router(availability.router, prefix="/availability", tags=["availabil
 app.include_router(appointments.router, prefix="/appointments", tags=["appointments"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(service.router, prefix="/services", tags=["services"])
+app.include_router(working_hours.router, prefix="/working-hours", tags=["working-hours"])

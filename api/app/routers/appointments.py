@@ -1,20 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
 from typing import List
-from datetime import datetime, timezone, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
 from app.core.deps import get_db, get_current_user
 from app.models.appointment import Appointment
-from app.models.availability import Availability
 from app.models.user import User
 from app.models.service import Service
+from app.models.working_hours import WorkingHour
 from app.schemas.appointment import AppointmentCreate, AppointmentOut
 
 router = APIRouter()
-
-BUCHAREST_TZ = ZoneInfo("Europe/Bucharest")
 
 
 # 🟢 Client: creează o programare
@@ -27,52 +23,44 @@ def create_appointment(
     if current_user.role != "client":
         raise HTTPException(status_code=403, detail="Only clients can book appointments")
 
-    # verificăm serviciul
     service = db.query(Service).filter(Service.id == data.service_id).first()
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
 
-    # calculăm end_at pe baza duratei serviciului
     end_at = data.start_at + timedelta(minutes=service.duration_minutes)
 
-    # 1. verificăm trecut
     if data.start_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="Cannot book in the past")
 
-    # 2. verificăm overlap
+    # verificăm overlap
     overlap = (
         db.query(Appointment)
         .filter(
             Appointment.provider_id == data.provider_id,
             Appointment.status != "canceled",
-            and_(
-                Appointment.start_at < end_at,
-                Appointment.end_at > data.start_at,
-            ),
+            Appointment.start_at < end_at,
+            Appointment.end_at > data.start_at,
         )
         .first()
     )
     if overlap:
         raise HTTPException(status_code=400, detail="Time slot already booked")
 
-    # 3. verificăm availability (în ora României)
-    start_local = data.start_at.astimezone(BUCHAREST_TZ)
-    end_local = end_at.astimezone(BUCHAREST_TZ)
-
-    avail = (
-        db.query(Availability)
+    # verificăm dacă e în working_hours
+    day_of_week = data.start_at.weekday() + 1 if data.start_at.weekday() < 6 else 0
+    wh = (
+        db.query(WorkingHour)
         .filter(
-            Availability.provider_id == data.provider_id,
-            Availability.date == start_local.date(),
-            Availability.start_time <= start_local.time(),
-            Availability.end_time >= end_local.time(),
+            WorkingHour.provider_id == data.provider_id,
+            WorkingHour.day_of_week == day_of_week,
+            WorkingHour.start_time <= data.start_at.time(),
+            WorkingHour.end_time >= end_at.time(),
         )
         .first()
     )
-    if not avail:
-        raise HTTPException(status_code=400, detail="Outside provider availability")
+    if not wh:
+        raise HTTPException(status_code=400, detail="Outside provider working hours")
 
-    # 4. creăm programarea
     new_app = Appointment(
         provider_id=data.provider_id,
         client_id=current_user.id,
@@ -80,6 +68,7 @@ def create_appointment(
         start_at=data.start_at,
         end_at=end_at,
         status="pending",
+        created_by="client",
     )
     db.add(new_app)
     db.commit()
@@ -106,14 +95,39 @@ def list_provider_appointments(
     current_user: User = Depends(get_current_user),
 ):
     if current_user.role != "provider":
-        raise HTTPException(status_code=403, detail="Only providers can see their appointments")
+        raise HTTPException(status_code=403, detail="Only providers can view their appointments")
 
     return db.query(Appointment).filter(Appointment.provider_id == current_user.id).all()
 
 
+# 🟢 Provider: blochează timp
+@router.post("/block", response_model=AppointmentOut)
+def block_time(
+    data: AppointmentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "provider":
+        raise HTTPException(status_code=403, detail="Only providers can block time")
+
+    new_block = Appointment(
+        provider_id=current_user.id,
+        client_id=None,
+        service_id=None,
+        start_at=data.start_at,
+        end_at=data.end_at,
+        status="confirmed",
+        created_by="provider",
+    )
+    db.add(new_block)
+    db.commit()
+    db.refresh(new_block)
+    return new_block
+
+
 # 🟢 Update status
 @router.patch("/{appointment_id}", response_model=AppointmentOut)
-def update_appointment_status(
+def update_status(
     appointment_id: int,
     status: str = Query(..., regex="^(pending|confirmed|canceled)$"),
     db: Session = Depends(get_db),
@@ -139,7 +153,7 @@ def update_appointment_status(
     return appt
 
 
-# 🟢 Provider: șterge programări (doar dacă sunt canceled)
+# 🟢 Provider: șterge programări (inclusiv blocaje create de el)
 @router.delete("/{appointment_id}")
 def delete_appointment(
     appointment_id: int,
@@ -153,74 +167,6 @@ def delete_appointment(
     if current_user.role != "provider" or appt.provider_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not allowed")
 
-    if appt.status != "canceled":
-        raise HTTPException(status_code=400, detail="Only canceled appointments can be deleted")
-
     db.delete(appt)
     db.commit()
     return {"detail": "Appointment deleted"}
-
-
-# 🟢 Listare sloturi disponibile
-@router.get("/slots")
-def get_available_slots(
-    provider_id: int,
-    service_id: int,
-    date: str,
-    db: Session = Depends(get_db),
-):
-    # verificăm serviciul
-    service = db.query(Service).filter(Service.id == service_id).first()
-    if not service:
-        raise HTTPException(status_code=404, detail="Service not found")
-
-    try:
-        target_date = datetime.strptime(date, "%Y-%m-%d").date()
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format (YYYY-MM-DD required)")
-
-    availability = (
-        db.query(Availability)
-        .filter(
-            Availability.provider_id == provider_id,
-            Availability.date == target_date,
-        )
-        .first()
-    )
-    if not availability:
-        return {"slots": []}
-
-    slots = []
-    start_dt = datetime.combine(target_date, availability.start_time, tzinfo=BUCHAREST_TZ)
-    end_dt = datetime.combine(target_date, availability.end_time, tzinfo=BUCHAREST_TZ)
-    slot_duration = timedelta(minutes=service.duration_minutes)
-
-    current = start_dt
-    while current + slot_duration <= end_dt:
-        slots.append(current)
-        current += slot_duration
-
-    appointments = (
-        db.query(Appointment)
-        .filter(
-            Appointment.provider_id == provider_id,
-            Appointment.start_at >= start_dt,
-            Appointment.end_at <= end_dt,
-            Appointment.status != "canceled",
-        )
-        .all()
-    )
-    taken = [(a.start_at, a.end_at) for a in appointments]
-
-    available_slots = []
-    for slot in slots:
-        slot_end = slot + slot_duration
-        conflict = False
-        for s, e in taken:
-            if (slot < e) and (slot_end > s):
-                conflict = True
-                break
-        if not conflict:
-            available_slots.append(slot.isoformat())
-
-    return {"slots": available_slots}

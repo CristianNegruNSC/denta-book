@@ -1,22 +1,27 @@
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional
 
-class AppointmentBase(BaseModel):
-    provider_id: int
-    service_id: int
+
+# 🔹 Ce trimite clientul / providerul când creează o programare sau blocaj
+class AppointmentCreate(BaseModel):
+    provider_id: Optional[int] = None   # obligatoriu pentru client
+    client_id: Optional[int] = None     # setat automat din token pentru client
+    service_id: Optional[int] = None    # poate fi null pentru blocaje
     start_at: datetime
+    end_at: datetime
 
-class AppointmentCreate(AppointmentBase):
-    pass
 
+# 🔹 Ce returnăm către frontend
 class AppointmentOut(BaseModel):
     id: int
-    provider_id: int
-    client_id: int
-    service_id: int
+    provider_id: Optional[int]
+    client_id: Optional[int]
+    service_id: Optional[int]
     start_at: datetime
     end_at: datetime
     status: str
+    created_by: str   # "client" sau "provider"
 
     class Config:
-        from_attributes = True
+        orm_mode = True

@@ -2,6 +2,9 @@
 import { useEffect, useState } from "react";
 import { api, setToken } from "@/lib/api";
 import RequireAuth from "@/components/RequireAuth";
+import DatePicker from "react-datepicker";
+import "react-datepicker/dist/react-datepicker.css";
+import { enUS } from "date-fns/locale";
 
 interface Appointment {
   id: number;
@@ -18,24 +21,19 @@ interface Provider {
   email: string;
 }
 
-interface Service {
-  id: number;
-  name: string;
-  price: number;
-  duration_minutes: number;
-}
-
 export default function AppointmentsPage() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [services, setServices] = useState<Service[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [availableDays, setAvailableDays] = useState<string[]>([]);
   const [slots, setSlots] = useState<string[]>([]);
 
-  const [serviceId, setServiceId] = useState("");
   const [providerId, setProviderId] = useState("");
   const [date, setDate] = useState("");
   const [startAt, setStartAt] = useState("");
   const [message, setMessage] = useState("");
+
+  // id fix pentru Consultatie
+  const CONSULTATIE_ID = 17;
 
   async function fetchAppointments() {
     const token = localStorage.getItem("token");
@@ -51,24 +49,33 @@ export default function AppointmentsPage() {
 
   useEffect(() => {
     fetchAppointments();
-    api.get("/services/all").then((res) => setServices(res.data));
+
+    // luam providerii care au serviciul "Consultatie"
+    api
+      .get("/services/providers_for_service", { params: { service_id: CONSULTATIE_ID } })
+      .then((res) => setProviders(res.data))
+      .catch(() => setMessage("Failed to load providers"));
   }, []);
 
   useEffect(() => {
-    if (serviceId) {
-      api.get(`/services/${serviceId}/providers`).then((res) => setProviders(res.data));
+    if (providerId) {
+      api
+        .get("/appointments/available_days", {
+          params: { provider_id: providerId, service_id: CONSULTATIE_ID },
+        })
+        .then((res) => setAvailableDays(res.data.available_days));
     }
-  }, [serviceId]);
+  }, [providerId]);
 
   useEffect(() => {
-    if (providerId && serviceId && date) {
+    if (providerId && date) {
       api
         .get("/appointments/slots", {
-          params: { provider_id: providerId, service_id: serviceId, date },
+          params: { provider_id: providerId, service_id: CONSULTATIE_ID, date },
         })
         .then((res) => setSlots(res.data.slots));
     }
-  }, [providerId, serviceId, date]);
+  }, [providerId, date]);
 
   async function handleAdd() {
     const token = localStorage.getItem("token");
@@ -78,10 +85,10 @@ export default function AppointmentsPage() {
     try {
       await api.post("/appointments/", {
         provider_id: parseInt(providerId),
-        service_id: parseInt(serviceId),
-        start_at: startAt, // direct, fără conversii UTC
+        service_id: CONSULTATIE_ID,
+        start_at: startAt,
       });
-      setMessage("Appointment booked!");
+      setMessage("Programarea a fost efectuată, așteptăm medicul să confirme.");
       fetchAppointments();
     } catch (err: any) {
       setMessage(err.response?.data?.detail || "Failed to book appointment");
@@ -93,13 +100,20 @@ export default function AppointmentsPage() {
     if (!token) return;
     setToken(token);
     try {
-      await api.patch(`/appointments/${id}`, null, { params: { status: "canceled" } });
+      await api.patch(`/appointments/${id}`, null, {
+        params: { status: "canceled" },
+      });
       setMessage("Appointment canceled");
       fetchAppointments();
     } catch {
       setMessage("Failed to cancel appointment");
     }
   }
+
+  const isDayAvailable = (date: Date) => {
+    const dateStr = date.toISOString().split("T")[0];
+    return availableDays.includes(dateStr);
+  };
 
   return (
     <RequireAuth>
@@ -110,69 +124,55 @@ export default function AppointmentsPage() {
           {/* Booking form */}
           <div className="space-y-4">
             <div>
-              <label className="block mb-1">Choose Service</label>
+              <label className="block mb-1">Serviciu</label>
+              <p className="font-semibold">Consultatie</p>
+            </div>
+
+            {/* Alege Medic */}
+            <div>
+              <label className="block mb-1">Alege Medic</label>
               <select
-                value={serviceId}
+                value={providerId}
                 onChange={(e) => {
-                  setServiceId(e.target.value);
-                  setProviderId("");
+                  setProviderId(e.target.value);
                   setSlots([]);
+                  setAvailableDays([]);
                 }}
                 className="w-full border p-2 rounded"
                 required
               >
-                <option value="">-- select service --</option>
-                {services.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} - {s.price} lei ({s.duration_minutes} min)
+                <option value="">-- selectează medic --</option>
+                {providers.map((p: Provider) => (
+                  <option key={p.id} value={p.id}>
+                    {p.email}
                   </option>
                 ))}
               </select>
             </div>
 
-            {serviceId && (
-              <div>
-                <label className="block mb-1">Choose Provider</label>
-                <select
-                  value={providerId}
-                  onChange={(e) => {
-                    setProviderId(e.target.value);
-                    setSlots([]);
-                  }}
-                  className="w-full border p-2 rounded"
-                  required
-                >
-                  <option value="">-- select provider --</option>
-                  {providers.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.email}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
+            {/* Alege Data */}
             {providerId && (
               <div>
-                <label className="block mb-1">Choose Date</label>
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => {
-                    setDate(e.target.value);
-                    setSlots([]);
-                  }}
-                  className="w-full border p-2 rounded"
-                  required
+                <label className="block mb-1">Alege Data</label>
+                <DatePicker
+                  selected={date ? new Date(date) : null}
+                  onChange={(d: Date | null) =>
+                    setDate(d ? d.toISOString().split("T")[0] : "")
+                  }
+                  filterDate={isDayAvailable}
+                  locale={enUS}
+                  className="border p-2 rounded w-full"
+                  placeholderText="Selectează o zi"
                 />
               </div>
             )}
 
+            {/* Sloturi disponibile */}
             {slots.length > 0 && (
               <div>
-                <label className="block mb-1">Available Slots</label>
+                <label className="block mb-1">Intervale disponibile</label>
                 <div className="grid grid-cols-3 gap-2">
-                  {slots.map((s) => (
+                  {slots.map((s: string) => (
                     <button
                       key={s}
                       type="button"
@@ -196,7 +196,7 @@ export default function AppointmentsPage() {
                 onClick={handleAdd}
                 className="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-600"
               >
-                Book Appointment
+                Confirmă programarea
               </button>
             )}
           </div>
@@ -205,12 +205,12 @@ export default function AppointmentsPage() {
 
           {/* My Appointments list */}
           <div>
-            <h2 className="text-lg font-semibold mb-2">My Appointments</h2>
+            <h2 className="text-lg font-semibold mb-2">Programările mele</h2>
             {appointments.length === 0 ? (
-              <p className="text-sm text-gray-500">No appointments yet</p>
+              <p className="text-sm text-gray-500">Nu există programări</p>
             ) : (
               <ul className="space-y-2">
-                {appointments.map((a) => (
+                {appointments.map((a: Appointment) => (
                   <li
                     key={a.id}
                     className={`border p-2 rounded flex justify-between items-center ${
@@ -222,8 +222,9 @@ export default function AppointmentsPage() {
                     }`}
                   >
                     <div>
-                      Service {a.service_id} with Provider {a.provider_id} <br />
-                      {a.start_at} → {a.end_at}
+                      Medic {a.provider_id} <br />
+                      {new Date(a.start_at).toLocaleString("ro-RO")} →{" "}
+                      {new Date(a.end_at).toLocaleString("ro-RO")}
                       <p className="text-sm">Status: {a.status}</p>
                     </div>
                     {a.status === "pending" && (
@@ -231,7 +232,7 @@ export default function AppointmentsPage() {
                         onClick={() => cancelAppointment(a.id)}
                         className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600"
                       >
-                        Cancel
+                        Anulează
                       </button>
                     )}
                   </li>

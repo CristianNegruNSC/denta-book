@@ -1,17 +1,36 @@
 from pydantic import BaseModel
 
+# doar numele serviciului unic (ex: Consultatie, Igienizari etc.)
 class ServiceBase(BaseModel):
     name: str
-    price: float
-    duration_minutes: int
+
 
 class ServiceCreate(ServiceBase):
-    is_default: bool = False  # implicit False, dar poate fi True pentru cele din lista standard
+    pass
+
 
 class ServiceOut(ServiceBase):
     id: int
-    provider_id: int
-    is_default: bool
 
     class Config:
-        from_attributes = True
+        orm_mode = True
+
+
+# schema pentru pivotul provider_services
+class ProviderServiceBase(BaseModel):
+    price: float = 0
+    duration_minutes: int = 30
+
+
+class ProviderServiceCreate(ProviderServiceBase):
+    service_id: int
+
+
+class ProviderServiceOut(ProviderServiceBase):
+    id: int
+    provider_id: int
+    service_id: int
+    service: ServiceOut   # include și numele serviciului
+
+    class Config:
+        orm_mode = True

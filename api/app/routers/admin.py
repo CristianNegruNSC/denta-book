@@ -3,8 +3,12 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.core.deps import get_db, get_current_user
 from app.models.user import User
+from app.models.service import Service
+from app.models.provider_service import ProviderService
 from app.schemas.user import UserOut, UserCreate
 from app.core.security import get_password_hash
+from app.models.working_hours import WorkingHour
+from datetime import time
 
 router = APIRouter()
 
@@ -17,7 +21,6 @@ def require_admin(current_user: User = Depends(get_current_user)):
 
 @router.post("/providers", response_model=UserOut)
 def create_provider(user: UserCreate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    # verifică dacă email-ul există
     existing = db.query(User).filter(User.email == user.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -30,6 +33,21 @@ def create_provider(user: UserCreate, db: Session = Depends(get_db), admin: User
     db.add(provider)
     db.commit()
     db.refresh(provider)
+
+    # ✅ adaugă automat programul default (luni-vineri 9–18)
+    default_hours = []
+    for day in range(1, 6):  # 1=luni, ..., 5=vineri
+        wh = WorkingHour(
+            provider_id=provider.id,
+            day_of_week=day,
+            start_time=time(9, 0),
+            end_time=time(18, 0),
+        )
+        default_hours.append(wh)
+
+    db.add_all(default_hours)
+    db.commit()
+
     return provider
 
 

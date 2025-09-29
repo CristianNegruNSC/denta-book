@@ -4,17 +4,20 @@ import { api, setToken } from "@/lib/api";
 import RequireAuth from "@/components/RequireAuth";
 
 interface Service {
-  id: number;
-  name: string;
+  id: number; // ID din provider_services
+  provider_id: number;
+  service_id: number;
   price: number;
   duration_minutes: number;
-  is_default: boolean;
+  service: {
+    id: number;
+    name: string;
+  };
 }
 
 export default function ProviderServicesPage() {
   const [services, setServices] = useState<Service[]>([]);
-  const [defaultServices, setDefaultServices] = useState<string[]>([]);
-  const [name, setName] = useState("");
+  const [name, setName] = useState(""); // pentru serviciu nou/custom
   const [price, setPrice] = useState("");
   const [duration, setDuration] = useState("");
   const [editing, setEditing] = useState<Service | null>(null);
@@ -30,36 +33,6 @@ export default function ProviderServicesPage() {
       setServices(res.data);
     } catch {
       setMessage("Failed to load services");
-    }
-  }
-
-  async function fetchDefaults() {
-    try {
-      const res = await api.get("/services/defaults");
-      setDefaultServices(res.data);
-    } catch {
-      setMessage("Failed to load default services");
-    }
-  }
-
-  async function handleAdd(serviceName: string, isDefault = false) {
-    const token = localStorage.getItem("token");
-    if (!token) return;
-    setToken(token);
-
-    try {
-      const res = await api.post("/services/", {
-        name: serviceName,
-        price: parseFloat(price) || 0,
-        duration_minutes: parseInt(duration) || 30,
-        is_default: isDefault,
-      });
-      setServices([...services, res.data]);
-      setName("");
-      setPrice("");
-      setDuration("");
-    } catch {
-      setMessage("Failed to add service");
     }
   }
 
@@ -86,17 +59,15 @@ export default function ProviderServicesPage() {
 
     try {
       const res = await api.put(`/services/${editing.id}`, {
-        name,
+        service_id: editing.service_id,
         price: parseFloat(price),
         duration_minutes: parseInt(duration),
-        is_default: editing.is_default,
       });
 
       setServices((prev) =>
         prev.map((s) => (s.id === editing.id ? res.data : s))
       );
       setEditing(null);
-      setName("");
       setPrice("");
       setDuration("");
     } catch {
@@ -104,9 +75,31 @@ export default function ProviderServicesPage() {
     }
   }
 
+  async function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    setToken(token);
+
+    try {
+      const res = await api.post("/services/custom", {
+        name,
+        price: parseFloat(price),
+        duration_minutes: parseInt(duration),
+      });
+
+      setServices([...services, res.data]);
+      setName("");
+      setPrice("");
+      setDuration("");
+    } catch {
+      setMessage("Failed to add service");
+    }
+  }
+
   useEffect(() => {
     fetchServices();
-    fetchDefaults();
   }, []);
 
   return (
@@ -114,79 +107,80 @@ export default function ProviderServicesPage() {
       <div className="p-6 space-y-6">
         <h1 className="text-2xl font-bold">Manage My Services</h1>
 
-        {/* Default Services */}
-        <div>
-          <h2 className="font-semibold mb-2">Default Services</h2>
-          <ul className="space-y-2">
-            {defaultServices.map((d, i) => (
-              <li key={i} className="flex items-center gap-2">
-                <span>{d}</span>
-                {!services.find((s) => s.name === d) && (
-                  <button
-                    className="bg-blue-500 text-white px-2 py-1 rounded"
-                    onClick={() => handleAdd(d, true)}
-                  >
-                    Add
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
+        {/* Add Custom Service */}
+        {!editing && (
+          <div>
+            <h2 className="font-semibold mb-2">Add New Service</h2>
+            <form onSubmit={handleAdd} className="space-y-2">
+              <input
+                placeholder="Service name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="border p-2 w-full"
+                required
+              />
+              <input
+                type="number"
+                placeholder="Price"
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                className="border p-2 w-full"
+                required
+              />
+              <input
+                type="number"
+                placeholder="Duration (minutes)"
+                value={duration}
+                onChange={(e) => setDuration(e.target.value)}
+                className="border p-2 w-full"
+                required
+              />
+              <button className="bg-green-500 text-white px-4 py-2 rounded">
+                Add
+              </button>
+            </form>
+          </div>
+        )}
 
-        {/* Add or Edit Service */}
-        <div>
-          <h2 className="font-semibold mb-2">
-            {editing ? "Edit Service" : "Add Custom Service"}
-          </h2>
-          <form
-            onSubmit={(e) =>
-              editing ? handleUpdate(e) : (e.preventDefault(), handleAdd(name, false))
-            }
-            className="space-y-2"
-          >
-            <input
-              placeholder="Service name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="border p-2 w-full"
-              required
-            />
-            <input
-              type="number"
-              placeholder="Price"
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              className="border p-2 w-full"
-              required
-            />
-            <input
-              type="number"
-              placeholder="Duration (minutes)"
-              value={duration}
-              onChange={(e) => setDuration(e.target.value)}
-              className="border p-2 w-full"
-              required
-            />
-            <button className="bg-green-500 text-white px-4 py-2 rounded">
-              {editing ? "Update Service" : "Add Custom"}
-            </button>
-            {editing && (
+        {/* Edit Service */}
+        {editing && (
+          <div>
+            <h2 className="font-semibold mb-2">Edit Service</h2>
+            <form onSubmit={handleUpdate} className="space-y-2">
+              <p className="font-medium">{editing.service.name}</p>
+              <input
+                type="number"
+                placeholder="Price"
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                className="border p-2 w-full"
+                required
+              />
+              <input
+                type="number"
+                placeholder="Duration (minutes)"
+                value={duration}
+                onChange={(e) => setDuration(e.target.value)}
+                className="border p-2 w-full"
+                required
+              />
+              <button className="bg-green-500 text-white px-4 py-2 rounded">
+                Update
+              </button>
               <button
                 type="button"
                 className="ml-2 bg-gray-400 text-white px-4 py-2 rounded"
                 onClick={() => {
                   setEditing(null);
-                  setName("");
                   setPrice("");
                   setDuration("");
                 }}
               >
                 Cancel
               </button>
-            )}
-          </form>
-        </div>
+            </form>
+          </div>
+        )}
 
         {/* Current Services */}
         <div>
@@ -198,13 +192,12 @@ export default function ProviderServicesPage() {
                 className="flex justify-between items-center border p-2 rounded"
               >
                 <span>
-                  {s.name} - {s.price} lei ({s.duration_minutes} min)
+                  {s.service.name} - {s.price} lei ({s.duration_minutes} min)
                 </span>
                 <div className="space-x-2">
                   <button
                     onClick={() => {
                       setEditing(s);
-                      setName(s.name);
                       setPrice(s.price.toString());
                       setDuration(s.duration_minutes.toString());
                     }}
